@@ -1,0 +1,59 @@
+name: VerifAI Playwright demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: GitHub runner label
+        required: true
+        default: ubuntu-latest
+        type: string
+      environment:
+        description: VerifAI environment name
+        required: true
+        default: TestEnv1
+        type: string
+      story_key:
+        description: Jira story key
+        required: true
+        default: SEV-1
+        type: string
+
+jobs:
+  playwright:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run Playwright tests
+        id: playwright
+        continue-on-error: true
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/playwright.json
+          PLAYWRIGHT_HTML_OUTPUT_DIR: test-results/html
+          PLAYWRIGHT_HTML_OPEN: never
+        run: npx playwright test tests --reporter=json,github,html
+      - name: Save failure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Send execution to VerifAI
+        if: always()
+        env:
+          VERIFAI_INGESTION_KEY: ${{ secrets.VERIFAI_INGESTION_KEY }}
+          VERIFAI_ENVIRONMENT: ${{ inputs.environment }}
+          VERIFAI_STORY_KEY: ${{ inputs.story_key }}
+        run: node scripts/ingest-playwright-report.mjs test-results/playwright.json
+      - name: Preserve test failure status
+        if: steps.playwright.outcome == 'failure'
+        run: exit 1
